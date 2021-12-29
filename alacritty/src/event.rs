@@ -13,7 +13,9 @@ use std::time::{Duration, Instant};
 use std::{env, f32, mem};
 
 use glutin::dpi::PhysicalSize;
-use glutin::event::{ElementState, Event as GlutinEvent, ModifiersState, MouseButton, WindowEvent};
+use glutin::event::{
+    DeviceId, ElementState, Event as GlutinEvent, ModifiersState, MouseButton, Touch, WindowEvent,
+};
 use glutin::event_loop::{ControlFlow, EventLoop, EventLoopProxy, EventLoopWindowTarget};
 use glutin::platform::run_return::EventLoopExtRunReturn;
 #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
@@ -174,6 +176,7 @@ pub struct ActionContext<'a, N, T> {
     pub terminal: &'a mut Term<T>,
     pub clipboard: &'a mut Clipboard,
     pub mouse: &'a mut Mouse,
+    pub touch_state: &'a mut TouchState,
     pub received_count: &'a mut usize,
     pub suppress_chars: &'a mut bool,
     pub modifiers: &'a mut ModifiersState,
@@ -318,6 +321,16 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
     #[inline]
     fn mouse(&self) -> &Mouse {
         self.mouse
+    }
+
+    #[inline]
+    fn touch_state_mut(&mut self) -> &mut TouchState {
+        self.touch_state
+    }
+
+    #[inline]
+    fn touch_state(&self) -> &TouchState {
+        self.touch_state
     }
 
     #[inline]
@@ -949,6 +962,12 @@ pub enum ClickState {
     TripleClick,
 }
 
+/// State of all touchscreens.
+#[derive(Debug, Default)]
+pub struct TouchState {
+    pub last_pos: HashMap<DeviceId, f64>,
+}
+
 /// State of the mouse.
 #[derive(Debug)]
 pub struct Mouse {
@@ -1116,6 +1135,10 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                         self.ctx.window().set_mouse_visible(true);
                         self.mouse_wheel_input(delta, phase);
                     },
+                    WindowEvent::Touch(Touch { device_id, phase, location, .. }) => {
+                        self.ctx.window().set_mouse_visible(false);
+                        self.touch_input(device_id, phase, location);
+                    },
                     WindowEvent::Focused(is_focused) => {
                         self.ctx.terminal.is_focused = is_focused;
                         *self.ctx.dirty = true;
@@ -1149,7 +1172,6 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                     | WindowEvent::Destroyed
                     | WindowEvent::ThemeChanged(_)
                     | WindowEvent::HoveredFile(_)
-                    | WindowEvent::Touch(_)
                     | WindowEvent::Moved(_) => (),
                 }
             },
@@ -1370,7 +1392,6 @@ impl Processor {
                     | WindowEvent::HoveredFileCancelled
                     | WindowEvent::Destroyed
                     | WindowEvent::HoveredFile(_)
-                    | WindowEvent::Touch(_)
                     | WindowEvent::Moved(_)
             ),
             GlutinEvent::Suspended { .. }

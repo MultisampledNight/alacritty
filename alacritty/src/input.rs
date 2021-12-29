@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 
 use glutin::dpi::PhysicalPosition;
 use glutin::event::{
-    ElementState, KeyboardInput, ModifiersState, MouseButton, MouseScrollDelta, TouchPhase,
+    DeviceId, ElementState, KeyboardInput, ModifiersState, MouseButton, MouseScrollDelta,
+    TouchPhase,
 };
 use glutin::event_loop::EventLoopWindowTarget;
 #[cfg(target_os = "macos")]
@@ -35,7 +36,7 @@ use crate::config::{Action, BindingMode, Key, MouseAction, SearchAction, UiConfi
 use crate::display::hint::HintMatch;
 use crate::display::window::Window;
 use crate::display::Display;
-use crate::event::{ClickState, Event, EventType, Mouse, TYPING_SEARCH_DELAY};
+use crate::event::{ClickState, Event, EventType, Mouse, TouchState, TYPING_SEARCH_DELAY};
 use crate::message_bar::{self, Message};
 use crate::scheduler::{Scheduler, TimerId, Topic};
 
@@ -72,6 +73,8 @@ pub trait ActionContext<T: EventListener> {
     fn selection_is_empty(&self) -> bool;
     fn mouse_mut(&mut self) -> &mut Mouse;
     fn mouse(&self) -> &Mouse;
+    fn touch_state_mut(&mut self) -> &mut TouchState;
+    fn touch_state(&self) -> &TouchState;
     fn received_count(&mut self) -> &mut usize;
     fn suppress_chars(&mut self) -> &mut bool;
     fn modifiers(&mut self) -> &mut ModifiersState;
@@ -627,6 +630,35 @@ impl<T: EventListener, A: ActionContext<T>> Processor<T, A> {
                     },
                     _ => (),
                 }
+            },
+        }
+    }
+
+    pub fn touch_input(
+        &mut self,
+        device: DeviceId,
+        phase: TouchPhase,
+        location: PhysicalPosition<f64>,
+    ) {
+        match phase {
+            TouchPhase::Started => {
+                self.ctx.touch_state_mut().last_pos.insert(device, location.y);
+            },
+            TouchPhase::Moved => {
+                let delta = location.y
+                    - self
+                        .ctx
+                        .touch_state()
+                        .last_pos
+                        .get(&device)
+                        .expect("Moved emitted without a Started beforehand");
+                // delta should be relative to the last position, not the start
+                self.ctx.touch_state_mut().last_pos.insert(device, location.y);
+                self.scroll_terminal(delta);
+            },
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                // assuming the cursor hasn't been moved since the last movement
+                self.ctx.touch_state_mut().last_pos.remove(&device);
             },
         }
     }

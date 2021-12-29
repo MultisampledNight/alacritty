@@ -31,7 +31,7 @@ use alacritty_terminal::tty;
 use crate::clipboard::Clipboard;
 use crate::config::UiConfig;
 use crate::display::Display;
-use crate::event::{ActionContext, Event, EventProxy, EventType, Mouse, SearchState};
+use crate::event::{ActionContext, Event, EventProxy, EventType, Mouse, SearchState, TouchState};
 use crate::input;
 use crate::message_bar::MessageBuffer;
 use crate::scheduler::Scheduler;
@@ -49,6 +49,7 @@ pub struct WindowContext {
     notifier: Notifier,
     font_size: Size,
     mouse: Mouse,
+    touch_state: TouchState,
     dirty: bool,
     #[cfg(not(windows))]
     master_fd: RawFd,
@@ -147,6 +148,7 @@ impl WindowContext {
             event_queue: Default::default(),
             modifiers: Default::default(),
             mouse: Default::default(),
+            touch_state: Default::default(),
             dirty: Default::default(),
         })
     }
@@ -255,6 +257,7 @@ impl WindowContext {
             notifier: &mut self.notifier,
             display: &mut self.display,
             mouse: &mut self.mouse,
+            touch_state: &mut self.touch_state,
             dirty: &mut self.dirty,
             terminal: &mut terminal,
             #[cfg(not(windows))]
