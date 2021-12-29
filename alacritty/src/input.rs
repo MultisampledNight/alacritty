@@ -1005,6 +1005,7 @@ mod tests {
         pub terminal: &'a mut Term<T>,
         pub size_info: &'a SizeInfo,
         pub mouse: &'a mut Mouse,
+        pub touch_state: &'a mut TouchState,
         pub clipboard: &'a mut Clipboard,
         pub message_buffer: &'a mut MessageBuffer,
         pub received_count: usize,
@@ -1063,6 +1064,16 @@ mod tests {
         #[inline]
         fn mouse(&self) -> &Mouse {
             self.mouse
+        }
+
+        #[inline]
+        fn touch_state_mut(&mut self) -> &mut TouchState {
+            self.touch_state
+        }
+
+        #[inline]
+        fn touch_state(&self) -> &TouchState {
+            self.touch_state
         }
 
         fn received_count(&mut self) -> &mut usize {
@@ -1145,6 +1156,7 @@ mod tests {
                 let context = ActionContext {
                     terminal: &mut terminal,
                     mouse: &mut mouse,
+                    touch_state: &mut Default::default(),
                     size_info: &size,
                     clipboard: &mut clipboard,
                     received_count: 0,
