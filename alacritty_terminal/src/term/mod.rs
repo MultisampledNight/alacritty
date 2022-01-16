@@ -17,7 +17,7 @@ use crate::config::Config;
 use crate::event::{Event, EventListener};
 use crate::grid::{Dimensions, Grid, GridIterator, Scroll};
 use crate::index::{self, Boundary, Column, Direction, Line, Point, Side};
-use crate::selection::{Selection, SelectionRange};
+use crate::selection::{Selection, SelectionRange, SelectionType};
 use crate::term::cell::{Cell, Flags, LineLength};
 use crate::term::color::{Colors, Rgb};
 use crate::vi_mode::{ViModeCursor, ViMotion};
@@ -348,24 +348,27 @@ impl<T> Term<T> {
     /// Convert the active selection to a String.
     pub fn selection_to_string(&self) -> Option<String> {
         let selection_range = self.selection.as_ref().and_then(|s| s.to_range(self))?;
-        let SelectionRange { start, end, is_block } = selection_range;
+        let SelectionRange { start, end, .. } = selection_range;
 
         let mut res = String::new();
 
-        if is_block {
-            for line in (start.line.0..end.line.0).map(Line::from) {
-                res += self
-                    .line_to_string(line, start.column..end.column, start.column.0 != 0)
-                    .trim_end();
-
-                // If the last column is included, newline is appended automatically.
-                if end.column != self.columns() - 1 {
+        match self.selection.as_ref() {
+            Some(Selection { ty: SelectionType::Block, .. }) => {
+                for line in (start.line.0..end.line.0).map(Line::from) {
+                    res += self
+                        .line_to_string(line, start.column..end.column, start.column.0 != 0)
+                        .trim_end();
                     res += "\n";
                 }
-            }
-            res += self.line_to_string(end.line, start.column..end.column, true).trim_end();
-        } else {
-            res = self.bounds_to_string(start, end);
+
+                res += self.line_to_string(end.line, start.column..end.column, true).trim_end();
+            },
+            Some(Selection { ty: SelectionType::Lines, .. }) => {
+                res = self.bounds_to_string(start, end) + "\n";
+            },
+            _ => {
+                res = self.bounds_to_string(start, end);
+            },
         }
 
         Some(res)
@@ -382,7 +385,7 @@ impl<T> Term<T> {
             res += &self.line_to_string(line, start_col..end_col, line == end.line);
         }
 
-        res
+        res.strip_suffix('\n').map(str::to_owned).unwrap_or(res)
     }
 
     /// Convert a single line in the grid to a String.
@@ -814,6 +817,10 @@ impl<T> Term<T> {
         cursor_cell.fg = fg;
         cursor_cell.bg = bg;
         cursor_cell.flags = flags;
+    }
+
+    pub fn colors(&self) -> &Colors {
+        &self.colors
     }
 }
 
@@ -2013,6 +2020,52 @@ mod tests {
     }
 
     #[test]
+    fn simple_selection_works() {
+        let size = SizeInfo::new(5., 5., 1.0, 1.0, 0.0, 0.0, false);
+        let mut term = Term::new(&Config::default(), size, ());
+        let grid = term.grid_mut();
+        for i in 0..4 {
+            if i == 1 {
+                continue;
+            }
+
+            grid[Line(i)][Column(0)].c = '"';
+
+            for j in 1..4 {
+                grid[Line(i)][Column(j)].c = 'a';
+            }
+
+            grid[Line(i)][Column(4)].c = '"';
+        }
+        grid[Line(2)][Column(0)].c = ' ';
+        grid[Line(2)][Column(4)].c = ' ';
+        grid[Line(2)][Column(4)].flags.insert(Flags::WRAPLINE);
+        grid[Line(3)][Column(0)].c = ' ';
+
+        // Multiple lines contain an empty line.
+        term.selection = Some(Selection::new(
+            SelectionType::Simple,
+            Point { line: Line(0), column: Column(0) },
+            Side::Left,
+        ));
+        if let Some(s) = term.selection.as_mut() {
+            s.update(Point { line: Line(2), column: Column(4) }, Side::Right);
+        }
+        assert_eq!(term.selection_to_string(), Some(String::from("\"aaa\"\n\n aaa ")));
+
+        // A wrapline.
+        term.selection = Some(Selection::new(
+            SelectionType::Simple,
+            Point { line: Line(2), column: Column(0) },
+            Side::Left,
+        ));
+        if let Some(s) = term.selection.as_mut() {
+            s.update(Point { line: Line(3), column: Column(4) }, Side::Right);
+        }
+        assert_eq!(term.selection_to_string(), Some(String::from(" aaa  aaa\"")));
+    }
+
+    #[test]
     fn semantic_selection_works() {
         let size = SizeInfo::new(5., 3., 1.0, 1.0, 0.0, 0.0, false);
         let mut term = Term::new(&Config::default(), size, ());
@@ -2082,28 +2135,46 @@ mod tests {
     }
 
     #[test]
-    fn selecting_empty_line() {
-        let size = SizeInfo::new(3.0, 3.0, 1.0, 1.0, 0.0, 0.0, false);
+    fn block_selection_works() {
+        let size = SizeInfo::new(5., 5., 1.0, 1.0, 0.0, 0.0, false);
         let mut term = Term::new(&Config::default(), size, ());
-        let mut grid: Grid<Cell> = Grid::new(3, 3, 0);
-        for l in 0..3 {
-            if l != 1 {
-                for c in 0..3 {
-                    grid[Line(l)][Column(c)].c = 'a';
-                }
+        let grid = term.grid_mut();
+        for i in 1..4 {
+            grid[Line(i)][Column(0)].c = '"';
+
+            for j in 1..4 {
+                grid[Line(i)][Column(j)].c = 'a';
             }
+
+            grid[Line(i)][Column(4)].c = '"';
         }
+        grid[Line(2)][Column(2)].c = ' ';
+        grid[Line(2)][Column(4)].flags.insert(Flags::WRAPLINE);
+        grid[Line(3)][Column(4)].c = ' ';
 
-        mem::swap(&mut term.grid, &mut grid);
-
-        let mut selection = Selection::new(
-            SelectionType::Simple,
-            Point { line: Line(0), column: Column(0) },
+        term.selection = Some(Selection::new(
+            SelectionType::Block,
+            Point { line: Line(0), column: Column(3) },
             Side::Left,
-        );
-        selection.update(Point { line: Line(2), column: Column(2) }, Side::Right);
-        term.selection = Some(selection);
-        assert_eq!(term.selection_to_string(), Some("aaa\n\naaa\n".into()));
+        ));
+
+        // The same column.
+        if let Some(s) = term.selection.as_mut() {
+            s.update(Point { line: Line(3), column: Column(3) }, Side::Right);
+        }
+        assert_eq!(term.selection_to_string(), Some(String::from("\na\na\na")));
+
+        // The first column.
+        if let Some(s) = term.selection.as_mut() {
+            s.update(Point { line: Line(3), column: Column(0) }, Side::Left);
+        }
+        assert_eq!(term.selection_to_string(), Some(String::from("\n\"aa\n\"a\n\"aa")));
+
+        // The last column.
+        if let Some(s) = term.selection.as_mut() {
+            s.update(Point { line: Line(3), column: Column(4) }, Side::Right);
+        }
+        assert_eq!(term.selection_to_string(), Some(String::from("\na\"\na\"\na")));
     }
 
     /// Check that the grid can be serialized back and forth losslessly.

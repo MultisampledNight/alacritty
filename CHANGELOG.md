@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Minimum Rust version has been bumped to 1.56.0
 
+### Changed
+
+- The `--help` output was reworked with a new colorful syntax
+
+### Fixed
+
+- OSC 4 not handling `?`
+- `?` in OSC strings reporting default colors instead of modified ones
+
 ## 0.10.0
 
 ### Packaging
@@ -32,6 +41,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Strip trailing whitespaces when yanking from a block selection
 - Display area keeps history position when viewport is cleared
 - Commands spawn from the current directory of the foreground shell in Unix-like systems
+- Remove trailing newline from strings taken from hints or simple/semantic selections
+- Builtin font is now used for box drawing characters from `U+2500` to `U+259f`
+- Logs now print the time since startup instead of the local time
 
 ### Fixed
 
@@ -43,6 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Freeze when the vi cursor is on the scrollback and scrollback clear is invoked
 - Vi cursor on topmost of the display moving downward when scrolled into history with active output
 - Input lag on Wayland with Nvidia binary driver
+- Crash when hovering the mouse over fullwidth characters
 
 ### Removed
 

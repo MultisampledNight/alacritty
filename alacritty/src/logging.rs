@@ -9,6 +9,7 @@ use std::io::{self, LineWriter, Stdout, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use std::{env, process};
 
 use glutin::event_loop::EventLoopProxy;
@@ -41,6 +42,7 @@ pub struct Logger {
     logfile: Mutex<OnDemandLogFile>,
     stdout: Mutex<LineWriter<Stdout>>,
     event_proxy: Mutex<EventLoopProxy<Event>>,
+    start: Instant,
 }
 
 impl Logger {
@@ -48,7 +50,7 @@ impl Logger {
         let logfile = Mutex::new(OnDemandLogFile::new());
         let stdout = Mutex::new(LineWriter::new(io::stdout()));
 
-        Logger { logfile, stdout, event_proxy: Mutex::new(event_proxy) }
+        Logger { logfile, stdout, event_proxy: Mutex::new(event_proxy), start: Instant::now() }
     }
 
     fn file_path(&self) -> Option<PathBuf> {
@@ -108,7 +110,7 @@ impl log::Log for Logger {
         }
 
         // Create log message for the given `record` and `target`.
-        let message = create_log_message(record, target);
+        let message = create_log_message(record, target, self.start);
 
         if let Ok(mut logfile) = self.logfile.lock() {
             // Write to logfile.
@@ -127,9 +129,11 @@ impl log::Log for Logger {
     fn flush(&self) {}
 }
 
-fn create_log_message(record: &log::Record<'_>, target: &str) -> String {
-    let now = time::strftime("%F %T.%f", &time::now()).unwrap();
-    let mut message = format!("[{}] [{:<5}] [{}] ", now, record.level(), target);
+fn create_log_message(record: &log::Record<'_>, target: &str, start: Instant) -> String {
+    let runtime = start.elapsed();
+    let secs = runtime.as_secs();
+    let nanos = runtime.subsec_nanos();
+    let mut message = format!("[{}.{:0>9}s] [{:<5}] [{}] ", secs, nanos, record.level(), target);
 
     // Alignment for the lines after the first new line character in the payload. We don't deal
     // with fullwidth/unicode chars here, so just `message.len()` is sufficient.

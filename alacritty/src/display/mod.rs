@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 use std::{f64, mem};
 
-use glutin::dpi::{PhysicalPosition, PhysicalSize};
+use glutin::dpi::PhysicalSize;
 use glutin::event::ModifiersState;
 use glutin::event_loop::EventLoopWindowTarget;
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -32,9 +32,9 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{SizeInfo, Term, TermMode, MIN_COLUMNS, MIN_SCREEN_LINES};
 
 use crate::config::font::Font;
-use crate::config::window::Dimensions;
 #[cfg(not(windows))]
 use crate::config::window::StartupMode;
+use crate::config::window::{Dimensions, Identity};
 use crate::config::UiConfig;
 use crate::display::bell::VisualBell;
 use crate::display::color::List;
@@ -202,6 +202,7 @@ impl Display {
     pub fn new<E>(
         config: &UiConfig,
         event_loop: &EventLoopWindowTarget<E>,
+        identity: &Identity,
         #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
         wayland_event_queue: Option<&EventQueue>,
     ) -> Result<Display, Error> {
@@ -236,6 +237,7 @@ impl Display {
         let mut window = Window::new(
             event_loop,
             config,
+            identity,
             estimated_size,
             #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
             wayland_event_queue,
@@ -305,14 +307,6 @@ impl Display {
         }
 
         window.set_visible(true);
-
-        // Set window position.
-        //
-        // TODO: replace `set_position` with `with_position` once available.
-        // Upstream issue: https://github.com/rust-windowing/winit/issues/806.
-        if let Some(position) = config.window.position {
-            window.set_outer_position(PhysicalPosition::from((position.x, position.y)));
-        }
 
         #[allow(clippy::single_match)]
         #[cfg(not(windows))]
@@ -535,7 +529,7 @@ impl Display {
                     lines.update(&cell);
 
                     // Draw the cell.
-                    api.render_cell(cell, glyph_cache);
+                    api.draw_cell(cell, glyph_cache);
                 }
             });
         }
@@ -604,7 +598,7 @@ impl Display {
             for (i, message_text) in text.iter().enumerate() {
                 let point = Point::new(start_line + i, Column(0));
                 self.renderer.with_api(config, &size_info, |mut api| {
-                    api.render_string(glyph_cache, point, fg, bg, message_text);
+                    api.draw_string(glyph_cache, point, fg, bg, message_text);
                 });
             }
         } else {
@@ -754,7 +748,7 @@ impl Display {
         let bg = config.colors.search_bar_background();
 
         self.renderer.with_api(config, size_info, |mut api| {
-            api.render_string(glyph_cache, point, fg, bg, &text);
+            api.draw_string(glyph_cache, point, fg, bg, &text);
         });
     }
 
@@ -772,7 +766,7 @@ impl Display {
         let bg = config.colors.normal.red;
 
         self.renderer.with_api(config, size_info, |mut api| {
-            api.render_string(glyph_cache, point, fg, bg, &timing);
+            api.draw_string(glyph_cache, point, fg, bg, &timing);
         });
     }
 
@@ -795,7 +789,7 @@ impl Display {
         if obstructed_column.map_or(true, |obstructed_column| obstructed_column < column) {
             let glyph_cache = &mut self.glyph_cache;
             self.renderer.with_api(config, size_info, |mut api| {
-                api.render_string(glyph_cache, Point::new(0, column), fg, bg, &text);
+                api.draw_string(glyph_cache, Point::new(0, column), fg, bg, &text);
             });
         }
     }

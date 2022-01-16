@@ -36,7 +36,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::search::{Match, RegexSearch};
 use alacritty_terminal::term::{ClipboardType, SizeInfo, Term, TermMode};
 
-use crate::cli::{Options as CliOptions, TerminalOptions};
+use crate::cli::{Options as CliOptions, WindowOptions};
 use crate::clipboard::Clipboard;
 use crate::config::ui_config::{HintAction, HintInternalAction};
 use crate::config::{self, UiConfig};
@@ -90,7 +90,7 @@ pub enum EventType {
     ConfigReload(PathBuf),
     Message(Message),
     Scroll(Scroll),
-    CreateWindow(TerminalOptions),
+    CreateWindow(WindowOptions),
     BlinkCursor,
     SearchNext,
 }
@@ -189,6 +189,7 @@ pub struct ActionContext<'a, N, T> {
     pub search_state: &'a mut SearchState,
     pub font_size: &'a mut Size,
     pub dirty: &'a mut bool,
+    pub preserve_title: bool,
     #[cfg(not(windows))]
     pub master_fd: RawFd,
     #[cfg(not(windows))]
@@ -392,9 +393,9 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
 
     #[cfg(not(windows))]
     fn create_new_window(&mut self) {
-        let mut options = TerminalOptions::default();
+        let mut options = WindowOptions::default();
         if let Ok(working_directory) = foreground_process_path(self.master_fd, self.shell_pid) {
-            options.working_directory = Some(working_directory);
+            options.terminal_options.working_directory = Some(working_directory);
         }
 
         let _ = self.event_proxy.send_event(Event::new(EventType::CreateWindow(options), None));
@@ -404,7 +405,7 @@ impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionCon
     fn create_new_window(&mut self) {
         let _ = self
             .event_proxy
-            .send_event(Event::new(EventType::CreateWindow(TerminalOptions::default()), None));
+            .send_event(Event::new(EventType::CreateWindow(WindowOptions::default()), None));
     }
 
     fn spawn_daemon<I, S>(&self, program: &str, args: I)
@@ -931,13 +932,15 @@ impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
     fn update_cursor_blinking(&mut self) {
         // Get config cursor style.
         let mut cursor_style = self.config.terminal_config.cursor.style;
-        if self.terminal.mode().contains(TermMode::VI) {
+        let vi_mode = self.terminal.mode().contains(TermMode::VI);
+        if vi_mode {
             cursor_style = self.config.terminal_config.cursor.vi_mode_style.unwrap_or(cursor_style);
-        };
+        }
 
         // Check terminal cursor style.
         let terminal_blinking = self.terminal.cursor_style().blinking;
-        let blinking = cursor_style.blinking_override().unwrap_or(terminal_blinking);
+        let mut blinking = cursor_style.blinking_override().unwrap_or(terminal_blinking);
+        blinking &= vi_mode || self.terminal().mode().contains(TermMode::SHOW_CURSOR);
 
         // Update cursor blinking state.
         let timer_id = TimerId::new(Topic::BlinkCursor, self.display.window.id());
@@ -1058,13 +1061,14 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                 },
                 EventType::Terminal(event) => match event {
                     TerminalEvent::Title(title) => {
-                        if self.ctx.config.window.dynamic_title {
-                            self.ctx.window().set_title(&title);
+                        if !self.ctx.preserve_title && self.ctx.config.window.dynamic_title {
+                            self.ctx.window().set_title(title);
                         }
                     },
                     TerminalEvent::ResetTitle => {
-                        if self.ctx.config.window.dynamic_title {
-                            self.ctx.display.window.set_title(&self.ctx.config.window.title);
+                        let window_config = &self.ctx.config.window;
+                        if window_config.dynamic_title {
+                            self.ctx.display.window.set_title(window_config.identity.title.clone());
                         }
                     },
                     TerminalEvent::Wakeup => *self.ctx.dirty = true,
@@ -1091,8 +1095,9 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                         self.ctx.write_to_pty(text.into_bytes());
                     },
                     TerminalEvent::ColorRequest(index, format) => {
-                        let text = format(self.ctx.display.colors[index]);
-                        self.ctx.write_to_pty(text.into_bytes());
+                        let color = self.ctx.terminal().colors()[index]
+                            .unwrap_or(self.ctx.display.colors[index]);
+                        self.ctx.write_to_pty(format(color).into_bytes());
                     },
                     TerminalEvent::PtyWrite(text) => self.ctx.write_to_pty(text.into_bytes()),
                     TerminalEvent::MouseCursorDirty => self.reset_mouse_cursor(),
@@ -1228,14 +1233,11 @@ impl Processor {
         &mut self,
         event_loop: &EventLoopWindowTarget<Event>,
         proxy: EventLoopProxy<Event>,
-        options: TerminalOptions,
+        options: WindowOptions,
     ) -> Result<(), Box<dyn Error>> {
-        let mut pty_config = self.config.terminal_config.pty_config.clone();
-        options.override_pty_config(&mut pty_config);
-
         let window_context = WindowContext::new(
             &self.config,
-            &pty_config,
+            &options,
             event_loop,
             proxy,
             #[cfg(all(feature = "wayland", not(any(target_os = "macos", windows))))]
